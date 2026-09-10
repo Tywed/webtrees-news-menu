@@ -37,9 +37,9 @@ class NewsService
         return $this->newsRepository->find($news_id, $tree);
     }
 
-    public function findAll(Tree $tree, int $limit = 5, int $offset = 0): array
+    public function findAll(Tree $tree, int $limit = 5, int $offset = 0, bool $include_future = false, string $language = ''): array
     {
-        return $this->newsRepository->findAll($tree, $limit, $offset);
+        return $this->newsRepository->findAll($tree, $limit, $offset, $include_future, $language);
     }
 
     /**
@@ -50,9 +50,9 @@ class NewsService
      * @param int $minViews
      * @return array
      */
-    public function findPopular(Tree $tree, int $limit = 5, int $minViews = 5): array
+    public function findPopular(Tree $tree, int $limit = 5, int $minViews = 5, bool $include_future = false, string $language = ''): array
     {
-        return $this->newsRepository->findPopular($tree, $limit, $minViews);
+        return $this->newsRepository->findPopular($tree, $limit, $minViews, $include_future, $language);
     }
 
     /**
@@ -64,14 +64,14 @@ class NewsService
      * @param int $offset
      * @return array
      */
-    public function findByCategory(Tree $tree, int $categoryId, int $limit = 5, int $offset = 0): array
+    public function findByCategory(Tree $tree, int $categoryId, int $limit = 5, int $offset = 0, bool $include_future = false, string $language = ''): array
     {
-        return $this->newsRepository->findByCategory($tree, $categoryId, $limit, $offset);
+        return $this->newsRepository->findByCategory($tree, $categoryId, $limit, $offset, $include_future, $language);
     }
 
-    public function count(Tree $tree): int
+    public function count(Tree $tree, bool $include_future = false, string $language = ''): int
     {
-        return $this->newsRepository->count($tree);
+        return $this->newsRepository->count($tree, $include_future, $language);
     }
 
     /**
@@ -81,9 +81,9 @@ class NewsService
      * @param int $categoryId
      * @return int
      */
-    public function countByCategory(Tree $tree, int $categoryId): int
+    public function countByCategory(Tree $tree, int $categoryId, bool $include_future = false, string $language = ''): int
     {
-        return $this->newsRepository->countByCategory($tree, $categoryId);
+        return $this->newsRepository->countByCategory($tree, $categoryId, $include_future, $language);
     }
 
     /**
@@ -95,9 +95,9 @@ class NewsService
      * @param int $offset
      * @return array
      */
-    public function findByAuthor(Tree $tree, int $userId, int $limit = 5, int $offset = 0): array
+    public function findByAuthor(Tree $tree, int $userId, int $limit = 5, int $offset = 0, bool $include_future = false, string $language = ''): array
     {
-        return $this->newsRepository->findByAuthor($tree, $userId, $limit, $offset);
+        return $this->newsRepository->findByAuthor($tree, $userId, $limit, $offset, $include_future, $language);
     }
 
     /**
@@ -107,9 +107,9 @@ class NewsService
      * @param int $userId
      * @return int
      */
-    public function countByAuthor(Tree $tree, int $userId): int
+    public function countByAuthor(Tree $tree, int $userId, bool $include_future = false, string $language = ''): int
     {
-        return $this->newsRepository->countByAuthor($tree, $userId);
+        return $this->newsRepository->countByAuthor($tree, $userId, $include_future, $language);
     }
 
     /**

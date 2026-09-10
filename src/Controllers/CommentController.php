@@ -115,8 +115,8 @@ class CommentController
         }
 
         $comment = $this->commentRepository->find($comments_id);
-        
-        if ($comment === null) {
+
+        if ($comment === null || !$this->commentRepository->belongsToTree($comment, $tree)) {
             $message = I18N::translate('Comment not found');
             FlashMessages::addMessage($message, 'danger');
         } else {

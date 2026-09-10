@@ -67,6 +67,15 @@ class CommentRepository
             ->count();
     }
 
+    public function belongsToTree(Comment $comment, Tree $tree): bool
+    {
+        return DB::table('news_comments')
+            ->join('news', 'news_comments.news_id', '=', 'news.news_id')
+            ->where('news_comments.comments_id', '=', $comment->getCommentsId())
+            ->where('news.gedcom_id', '=', $tree->id())
+            ->exists();
+    }
+
     public function create(int $news_id, int $user_id, string $comment): Comment
     {
         $comments_id = DB::table('news_comments')->insertGetId([

@@ -3,6 +3,9 @@
 use Fisharebest\Webtrees\I18N;
 
 return [
+    'Replace the built-in news module (gedcom_news)' => 'Заменить встроенный модуль новостей (gedcom_news)',
+    'Disables the standard news block so that this module becomes the only news interface' => 'Отключает стандартный блок новостей, чтобы этот модуль стал единственным интерфейсом новостей',
+
     'Write a comment' => 'Написать комментарий',
     'Latest news' => 'Последние новости',
     'You have already put a like' => 'Вы уже поставили лайк',

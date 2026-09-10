@@ -16,7 +16,6 @@ use Tywed\Webtrees\Module\NewsMenu\Services\NewsService;
 use Tywed\Webtrees\Module\NewsMenu\Repositories\CommentRepository;
 use Fisharebest\Webtrees\View;
 use Tywed\Webtrees\Module\NewsMenu\NewsMenu;
-use Illuminate\Support\Collection;
 use Fisharebest\Webtrees\Http\ViewResponseTrait;
 use Fisharebest\Webtrees\Services\UserService;
 use Fisharebest\Webtrees\Registry;
@@ -48,59 +47,23 @@ class NewsController
         $this->categoryRepository = $categoryRepository ?? new CategoryRepository();
     }
 
-    /**
-     * Convert an array to a Collection if it isn't already one
-     */
-    private function ensureCollection($items): Collection
-    {
-        return $items instanceof Collection ? $items : new Collection($items);
-    }
-
-    /**
-     * Filter articles by current language with optional exclusion
-     * 
-     * @param Collection $articles
-     * @param int|null $excludeNewsId Optional news ID to exclude from results
-     * @return Collection
-     */
-    private function filterByLanguage(Collection $articles, ?int $excludeNewsId = null): Collection
-    {
-        $currentLanguage = I18N::languageTag();
-        
-        return $articles->filter(function($article) use ($currentLanguage, $excludeNewsId) {
-            // Exclude specific news if provided
-            if ($excludeNewsId !== null && $article->getNewsId() === $excludeNewsId) {
-                return false;
-            }
-            
-            $languages = $article->getLanguagesArray();
-            // If no languages specified, show for all languages
-            return empty($languages) || in_array($currentLanguage, $languages);
-        });
-    }
-
     public function page(ServerRequestInterface $request): ResponseInterface
     {
         $tree = Validator::attributes($request)->tree();
-        $currentPage = Validator::queryParams($request)->integer('page', 1);
-        $limit = Validator::queryParams($request)->integer('limit', 5);
+        $currentPage = max(1, Validator::queryParams($request)->integer('page', 1));
+        $limit = max(1, min(100, Validator::queryParams($request)->integer('limit', (int)$this->module->getPreference('limit_news', '5'))));
         $offset = ($currentPage - 1) * $limit;
 
-        $totalArticles = $this->newsService->count($tree);
-        $articles = $this->ensureCollection($this->newsService->findAll($tree, $limit, $offset));
-        
-        // Filter articles by current language
-        $articles = $this->filterByLanguage($articles);
-        
-        // Get categories for the view
+        $includeFuture = $this->module->canEditNews($tree);
+        $language = I18N::languageTag();
+
+        $totalArticles = $this->newsService->count($tree, $includeFuture, $language);
+        $articles = $this->newsService->findAll($tree, $limit, $offset, $includeFuture, $language);
+
         $categories = $this->newsService->getAllCategories();
-        
-        // Try to get popular articles
+
         $minViews = (int)$this->module->getPreference('min_views_popular', '5');
-        $popularArticles = $this->ensureCollection($this->newsService->findPopular($tree, 3, $minViews));
-        
-        // Filter popular articles by current language
-        $popularArticles = $this->filterByLanguage($popularArticles);
+        $popularArticles = $this->newsService->findPopular($tree, 3, $minViews, $includeFuture, $language);
 
         return $this->viewResponse($this->module->name() . '::page-news', [
             'title' => I18N::translate('News'),
@@ -128,25 +91,29 @@ class NewsController
             throw new HttpNotFoundException(I18N::translate('%s does not exist.', 'news_id:' . $news_id));
         }
 
-        // Increment view count
+        $canEditNews = $this->module->canEditNews($tree);
+        if (!$canEditNews && $news->getUpdated()->isFuture()) {
+            throw new HttpNotFoundException(I18N::translate('%s does not exist.', 'news_id:' . $news_id));
+        }
+
         $this->newsService->incrementViewCount($news);
 
-        // Get all data for the view
-        $articles = $this->ensureCollection($this->newsService->findAll($tree, 5));
+        $includeFuture = $canEditNews;
+        $language = I18N::languageTag();
+
+        $articles = $this->newsService->findAll($tree, 5, 0, $includeFuture, $language);
         $total_likes = $this->newsService->getLikesCount($news_id);
         $total_comments = $this->commentRepository->countByNews($news_id);
         
         $limit_comments = (int)$this->module->getPreference('limit_comments', '5');
-        // Use reasonable limit instead of 999
         $maxCommentsLimit = 100;
         $comments = $this->commentRepository->findByNews($news_id, $maxCommentsLimit);
         
         $like_exists = $user_id !== null ? $this->newsService->hasUserLiked($news_id, $user_id) : false;
         $categories = $this->newsService->getAllCategories();
         
-        // Try to get popular articles
         $minViews = (int)$this->module->getPreference('min_views_popular', '5');
-        $popularArticles = $this->ensureCollection($this->newsService->findPopular($tree, 3, $minViews));
+        $popularArticles = $this->newsService->findPopular($tree, 3, $minViews, $includeFuture, $language);
         
         // Optimize N+1 queries: batch load likes and user data
         $commentsIds = array_map(fn($c) => $c->getCommentsId(), $comments);
@@ -198,12 +165,6 @@ class NewsController
             $authorIndividual = Registry::individualFactory()->make($gedcom_id, $tree);
         }
         
-        // Filter articles by current language, excluding current news
-        $articles = $this->filterByLanguage($articles, $news_id);
-        
-        // Filter popular articles by current language, excluding current news
-        $popularArticles = $this->filterByLanguage($popularArticles, $news_id);
-
         return $this->viewResponse($this->module->name() . '::show', [
             'module_name' => $this->module->name(),
             'module' => $this->module,
@@ -264,7 +225,7 @@ class NewsController
 
         return $this->viewResponse($this->module->name() . '::edit', [
             'news_id' => $news_id,
-            'updated' => $news ? $news->getUpdated() : null,
+            'updated' => $news ? $news->getUpdated()->format('Y-m-d\TH:i') : '',
             'subject' => $news ? $news->getSubject() : '',
             'brief' => $news ? $news->getBrief() : '',
             'body' => $news ? $news->getBody() : '',
@@ -497,16 +458,16 @@ class NewsController
     {
         $tree = Validator::attributes($request)->tree();
         $category_id = Validator::queryParams($request)->integer('category_id');
-        $currentPage = Validator::queryParams($request)->integer('page', 1);
-        $limit = Validator::queryParams($request)->integer('limit', 5);
+        $currentPage = max(1, Validator::queryParams($request)->integer('page', 1));
+        $limit = max(1, min(100, Validator::queryParams($request)->integer('limit', (int)$this->module->getPreference('limit_news', '5'))));
         $offset = ($currentPage - 1) * $limit;
 
-        $totalArticles = $this->newsService->countByCategory($tree, $category_id);
-        $articles = $this->ensureCollection($this->newsService->findByCategory($tree, $category_id, $limit, $offset));
-        
-        // Filter articles by current language
-        $articles = $this->filterByLanguage($articles);
-        
+        $includeFuture = $this->module->canEditNews($tree);
+        $language = I18N::languageTag();
+
+        $totalArticles = $this->newsService->countByCategory($tree, $category_id, $includeFuture, $language);
+        $articles = $this->newsService->findByCategory($tree, $category_id, $limit, $offset, $includeFuture, $language);
+
         $categories = $this->newsService->getAllCategories();
         
         // Find the current category
@@ -546,9 +507,8 @@ class NewsController
     {
         $tree = Validator::attributes($request)->tree();
         $user_id = Validator::queryParams($request)->integer('user_id');
-        $currentPage = Validator::queryParams($request)->integer('page', 1);
-        $limit = Validator::queryParams($request)->integer('limit', 5);
-
+        $currentPage = max(1, Validator::queryParams($request)->integer('page', 1));
+        $limit = max(1, min(100, Validator::queryParams($request)->integer('limit', (int)$this->module->getPreference('limit_news', '5'))));
         $offset = ($currentPage - 1) * $limit;
 
         // Get author user
@@ -567,12 +527,11 @@ class NewsController
         // Get all categories for sidebar
         $categories = $this->categoryRepository->findAll();
 
-        // Get news by author
-        $articles = $this->newsService->findByAuthor($tree, $user_id, $limit, $offset);
-        $totalArticles = $this->newsService->countByAuthor($tree, $user_id);
+        $includeFuture = $this->module->canEditNews($tree);
+        $language = I18N::languageTag();
 
-        // Convert array to Collection and filter by language
-        $articles = $this->filterByLanguage($this->ensureCollection($articles));
+        $articles = $this->newsService->findByAuthor($tree, $user_id, $limit, $offset, $includeFuture, $language);
+        $totalArticles = $this->newsService->countByAuthor($tree, $user_id, $includeFuture, $language);
 
         // Get author name - prefer Individual name if available
         if ($authorIndividual !== null) {

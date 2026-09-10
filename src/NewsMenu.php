@@ -15,7 +15,6 @@ use Fisharebest\Webtrees\Module\ModuleCustomInterface;
 use Fisharebest\Webtrees\Module\ModuleGlobalInterface;
 use Fisharebest\Webtrees\Module\ModuleConfigInterface;
 use Fisharebest\Webtrees\Module\ModuleConfigTrait;
-use Fisharebest\Webtrees\Registry;
 use Fisharebest\Webtrees\Services\MigrationService;
 use Fisharebest\Webtrees\Services\HtmlService;
 use Psr\Http\Message\ServerRequestInterface;
@@ -27,7 +26,8 @@ use Tywed\Webtrees\Module\NewsMenu\Controllers\CommentController;
 use Tywed\Webtrees\Module\NewsMenu\Repositories\NewsRepository;
 use Tywed\Webtrees\Module\NewsMenu\Repositories\CommentRepository;
 use Tywed\Webtrees\Module\NewsMenu\Services\NewsService;
-use Illuminate\Support\Facades\DB;
+use Fisharebest\Webtrees\Services\ModuleService;
+use Illuminate\Database\Capsule\Manager as DB;
 use Fisharebest\Webtrees\FlashMessages;
 use Tywed\Webtrees\Module\NewsMenu\Repositories\CategoryRepository;
 use Fisharebest\Webtrees\Validator;
@@ -51,7 +51,7 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
     public const CUSTOM_MODULE = 'News-Menu';
     public const CUSTOM_AUTHOR = 'Tywed';
     public const CUSTOM_WEBSITE = 'https://github.com/tywed/' . self::CUSTOM_MODULE . '/';
-    public const CUSTOM_VERSION = '0.3.4';
+    public const CUSTOM_VERSION = '0.3.5';
     public const CUSTOM_LAST = self::CUSTOM_WEBSITE . 'raw/main/latest-version.txt';
     public const CUSTOM_SUPPORT_URL = self::CUSTOM_WEBSITE . 'issues';
     public const SCHEMA_VERSION = 5;
@@ -132,14 +132,30 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
     {
         View::registerNamespace($this->name(), $this->resourcesFolder() . 'views/');
 
-        // Run migrations
         $migrations_namespace = __NAMESPACE__ . '\Migrations';
-        
-        AppHelper::get(MigrationService::class)->updateSchema(
-            $migrations_namespace,
-            self::SETTING_SCHEMA_NAME, 
-            self::SCHEMA_VERSION
-        );
+
+        $connection = DB::connection();
+
+        // DDL statements implicitly commit any open transaction.  Commit the
+        // request transaction first and restore it afterwards, so that the
+        // schema can be created or upgraded on the first request.
+        $had_transaction = $connection->transactionLevel() > 0;
+
+        if ($had_transaction) {
+            $connection->commit();
+        }
+
+        try {
+            AppHelper::get(MigrationService::class)->updateSchema(
+                $migrations_namespace,
+                self::SETTING_SCHEMA_NAME,
+                self::SCHEMA_VERSION
+            );
+        } finally {
+            if ($had_transaction && $connection->transactionLevel() === 0) {
+                $connection->beginTransaction();
+            }
+        }
     }
 
     /**
@@ -305,11 +321,11 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
 
     /**
      * Like a news entry
-     * 
+     *
      * @param ServerRequestInterface $request
      * @return ResponseInterface
      */
-    public function getLikeNewsAction(ServerRequestInterface $request): ResponseInterface
+    public function postLikeNewsAction(ServerRequestInterface $request): ResponseInterface
     {
         return $this->newsController->like($request);
     }
@@ -338,11 +354,11 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
 
     /**
      * Like a comment
-     * 
+     *
      * @param ServerRequestInterface $request
      * @return ResponseInterface
      */
-    public function getLikeCommentsAction(ServerRequestInterface $request): ResponseInterface
+    public function postLikeCommentsAction(ServerRequestInterface $request): ResponseInterface
     {
         return $this->commentController->like($request);
     }
@@ -371,11 +387,11 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
 
     /**
      * Toggle pinned status of a news article
-     * 
+     *
      * @param ServerRequestInterface $request
      * @return ResponseInterface
      */
-    public function getTogglePinnedAction(ServerRequestInterface $request): ResponseInterface
+    public function postTogglePinnedAction(ServerRequestInterface $request): ResponseInterface
     {
         return $this->newsController->togglePinned($request);
     }
@@ -393,6 +409,8 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
         $categoryRepository = new CategoryRepository();
         $categories = $categoryRepository->findAll();
 
+        $gedcomNews = AppHelper::get(ModuleService::class)->findByName('gedcom_news', true);
+
         return $this->viewResponse($this->name() . '::settings', [
             'title' => $this->title(),
             'news_menu_order' => $this->getPreference('news_menu_order', '-1'),
@@ -403,6 +421,8 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
             'min_role_comments' => $this->getPreference('min_role_comments', 'editor'),
             'min_role_view_comments' => $this->getPreference('min_role_view_comments', 'visitor'),
             'show_author' => $this->getPreference('show_author', '1'),
+            'replace_gedcom_news' => ($gedcomNews !== null && !$gedcomNews->isEnabled()) ? '1' : '0',
+            'gedcom_news_available' => $gedcomNews !== null,
             'categories' => $categories,
             'module_name' => $this->name(),
             'available_languages' => $this->getAvailableLanguages(),
@@ -457,8 +477,8 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
             $min_role_view_comments = 'visitor';
         }
 
-        // Handle show_author checkbox (checkbox returns '1' if checked, null if unchecked)
         $show_author = isset($params['show_author']) && $params['show_author'] === '1' ? '1' : '0';
+        $replace_gedcom_news = isset($params['replace_gedcom_news']) && $params['replace_gedcom_news'] === '1' ? '1' : '0';
 
         $this->setPreference('news_menu_order', (string)$news_menu_order);
         $this->setPreference('limit_news', (string)$limit_news);
@@ -468,6 +488,14 @@ class NewsMenu extends AbstractModule implements ModuleCustomInterface, ModuleMe
         $this->setPreference('min_role_comments', $min_role_comments);
         $this->setPreference('min_role_view_comments', $min_role_view_comments);
         $this->setPreference('show_author', $show_author);
+        $this->setPreference('replace_gedcom_news', $replace_gedcom_news);
+
+        $gedcomNews = AppHelper::get(ModuleService::class)->findByName('gedcom_news', true);
+        if ($gedcomNews !== null && $gedcomNews->isEnabled() === ($replace_gedcom_news === '1')) {
+            DB::table('module')
+                ->where('module_name', '=', 'gedcom_news')
+                ->update(['status' => $replace_gedcom_news === '1' ? 'disabled' : 'enabled']);
+        }
 
         $message = I18N::translate('The preferences for the module "%s" have been updated.', $this->title());
         FlashMessages::addMessage($message, 'success');

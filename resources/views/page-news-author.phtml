@@ -95,20 +95,23 @@ use Illuminate\Support\Collection;
 
                                     <?php if ($module->canEditNews($tree)) : ?>
                                         <hr />
-                                        <form method="post" action="<?php echo e(route('module', ['module' => $module_name, 'action' => 'DeleteNews', 'news_id' => $article->getNewsId(), 'tree' => $tree->name()])); ?>" class="d-inline">
-                                            <a class="btn btn-link" href="<?php echo e(route('module', ['module' => $module_name, 'action' => 'EditNews', 'news_id' => $article->getNewsId(), 'tree' => $tree->name()])); ?>">
-                                                <?php echo I18N::translate('Edit') ?>
-                                            </a>
+                                        <a class="btn btn-link" href="<?php echo e(route('module', ['module' => $module_name, 'action' => 'EditNews', 'news_id' => $article->getNewsId(), 'tree' => $tree->name()])); ?>">
+                                            <?php echo I18N::translate('Edit') ?>
+                                        </a>
 
-                                            <a class="btn btn-link" href="<?php echo e(route('module', ['module' => $module_name, 'action' => 'TogglePinned', 'news_id' => $article->getNewsId(), 'tree' => $tree->name()])); ?>">
+                                        <form method="post" action="<?php echo e(route('module', ['module' => $module_name, 'action' => 'TogglePinned', 'news_id' => $article->getNewsId(), 'tree' => $tree->name()])); ?>" class="d-inline">
+                                            <button class="btn btn-link" type="submit">
                                                 <?php if ($article->isPinned()): ?>
                                                     <i class="bi bi-pin-angle-fill text-danger"></i> <?php echo I18N::translate('Unpin') ?>
                                                 <?php else: ?>
                                                     <i class="bi bi-pin-angle"></i> <?php echo I18N::translate('Pin') ?>
                                                 <?php endif; ?>
-                                            </a>
+                                            </button>
+                                            <?php echo csrf_field() ?>
+                                        </form>
 
-                                            <button class="btn btn-link" type="submit" data-wt-confirm="<?php echo I18N::translate('Are you sure you want to delete "%s"?', e($article->getSubject())) ?>" onclick="return confirm('<?php echo I18N::translate('Are you sure you want to delete "%s"?', e($article->getSubject())) ?>');">
+                                        <form method="post" action="<?php echo e(route('module', ['module' => $module_name, 'action' => 'DeleteNews', 'news_id' => $article->getNewsId(), 'tree' => $tree->name()])); ?>" class="d-inline">
+                                            <button class="btn btn-link" type="submit" onclick="return confirm(<?php echo e(json_encode(I18N::translate('Are you sure you want to delete "%s"?', $article->getSubject()), JSON_UNESCAPED_UNICODE)) ?>);">
                                                 <?php echo I18N::translate('Delete') ?>
                                             </button>
                                             <?php echo csrf_field() ?>

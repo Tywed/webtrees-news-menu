@@ -133,6 +133,22 @@ use Fisharebest\Webtrees\Http\RequestHandlers\ModulesAllPage;
                 </div>
             </fieldset>
 
+            <?php if (!empty($gedcom_news_available)): ?>
+            <fieldset class="row mb-4">
+                <legend class="col-form-label col-sm-7">
+                    <?php echo I18N::translate('Replace the built-in news module (gedcom_news)'); ?>
+                </legend>
+                <div class="col-sm-4">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="replace_gedcom_news" id="replace_gedcom_news" value="1" <?php echo ($replace_gedcom_news ?? '0') === '1' ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="replace_gedcom_news">
+                            <?php echo I18N::translate('Disables the standard news block so that this module becomes the only news interface'); ?>
+                        </label>
+                    </div>
+                </div>
+            </fieldset>
+            <?php endif; ?>
+
             <div class="row mb-3">
                 <div class="offset-sm-3 col-sm-9">
                     <button type="submit" class="btn btn-primary">

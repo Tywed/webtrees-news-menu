@@ -5,10 +5,51 @@ namespace Tywed\Webtrees\Module\NewsMenu\Repositories;
 use Carbon\Carbon;
 use Fisharebest\Webtrees\Tree;
 use Illuminate\Database\Capsule\Manager as DB;
+use Illuminate\Database\Query\Builder;
 use Tywed\Webtrees\Module\NewsMenu\Models\News;
 
 class NewsRepository
 {
+    private function baseQuery(Tree $tree, bool $include_future, string $language): Builder
+    {
+        $query = DB::table('news')
+            ->where('gedcom_id', '=', $tree->id());
+
+        if (!$include_future) {
+            $query->where('updated', '<=', Carbon::now());
+        }
+
+        if ($language !== '') {
+            $query->where(static function (Builder $query) use ($language): void {
+                $query->where('languages', '=', '')
+                    ->orWhere('languages', '=', $language)
+                    ->orWhere('languages', 'LIKE', $language . ',%')
+                    ->orWhere('languages', 'LIKE', '%,' . $language)
+                    ->orWhere('languages', 'LIKE', '%,' . $language . ',%');
+            });
+        }
+
+        return $query;
+    }
+
+    private function hydrate(object $row): News
+    {
+        return new News(
+            $row->news_id,
+            $row->gedcom_id,
+            (int)($row->user_id ?? 0),
+            $row->subject,
+            $row->brief,
+            $row->body,
+            $row->media_id,
+            Carbon::parse($row->updated),
+            $row->category_id ?? null,
+            $row->languages ?? '',
+            (bool)($row->is_pinned ?? false),
+            (int)($row->view_count ?? 0)
+        );
+    }
+
     public function find(int $news_id, Tree $tree): ?News
     {
         $row = DB::table('news')
@@ -36,10 +77,9 @@ class NewsRepository
         );
     }
 
-    public function findAll(Tree $tree, int $limit = 5, int $offset = 0): array
+    public function findAll(Tree $tree, int $limit = 5, int $offset = 0, bool $include_future = false, string $language = ''): array
     {
-        $rows = DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        $rows = $this->baseQuery($tree, $include_future, $language)
             ->orderBy('is_pinned', 'desc')
             ->orderByDesc('updated')
             ->offset($offset)
@@ -48,20 +88,7 @@ class NewsRepository
 
         $news = [];
         foreach ($rows as $row) {
-            $news[] = new News(
-                $row->news_id,
-                $row->gedcom_id,
-                (int)($row->user_id ?? 0),
-                $row->subject,
-                $row->brief,
-                $row->body,
-                $row->media_id,
-                Carbon::parse($row->updated),
-                $row->category_id ?? null,
-                $row->languages ?? '',
-                (bool)($row->is_pinned ?? false),
-                (int)($row->view_count ?? 0)
-            );
+            $news[] = $this->hydrate($row);
         }
 
         return $news;
@@ -69,41 +96,33 @@ class NewsRepository
 
     /**
      * Find popular news articles sorted by popularity score
-     * 
+     *
      * @param Tree $tree
      * @param int $limit
      * @param int $minViews Minimum view count to be considered popular
      * @return array
      */
-    public function findPopular(Tree $tree, int $limit = 5, int $minViews = 5): array
+    public function findPopular(Tree $tree, int $limit = 5, int $minViews = 5, bool $include_future = false, string $language = ''): array
     {
-        // First do a simple query to check if there's enough data
-        $newsCount = DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        $newsCount = $this->baseQuery($tree, $include_future, $language)
             ->where('view_count', '>=', $minViews)
             ->count();
-            
+
         if ($newsCount === 0) {
             return [];
         }
-        
+
         try {
-            $query = DB::table('news')
-                ->select('news.*')
-                ->where('news.gedcom_id', '=', $tree->id())
-                ->where('news.view_count', '>=', $minViews);
-                
-            // Get like counts
             $likeSubquery = DB::table('news_likes')
                 ->select('news_id', DB::raw('COUNT(DISTINCT user_id) as likes_count'))
                 ->groupBy('news_id');
-                
-            // Get comment counts
+
             $commentSubquery = DB::table('news_comments')
                 ->select('news_id', DB::raw('COUNT(DISTINCT comments_id) as comments_count'))
                 ->groupBy('news_id');
-                
-            $rows = $query
+
+            $rows = $this->baseQuery($tree, $include_future, $language)
+                ->where('news.view_count', '>=', $minViews)
                 ->leftJoinSub($likeSubquery, 'like_counts', 'news.news_id', '=', 'like_counts.news_id')
                 ->leftJoinSub($commentSubquery, 'comment_counts', 'news.news_id', '=', 'comment_counts.news_id')
                 ->select(
@@ -115,9 +134,7 @@ class NewsRepository
                 ->limit($limit)
                 ->get();
         } catch (\Exception $e) {
-            // Fallback to a simpler query if the complex one fails
-            $rows = DB::table('news')
-                ->where('gedcom_id', '=', $tree->id())
+            $rows = $this->baseQuery($tree, $include_future, $language)
                 ->where('view_count', '>=', $minViews)
                 ->orderByDesc('view_count')
                 ->limit($limit)
@@ -126,20 +143,7 @@ class NewsRepository
 
         $news = [];
         foreach ($rows as $row) {
-            $news[] = new News(
-                $row->news_id,
-                $row->gedcom_id,
-                (int)($row->user_id ?? 0),
-                $row->subject,
-                $row->brief,
-                $row->body,
-                $row->media_id,
-                Carbon::parse($row->updated),
-                $row->category_id ?? null,
-                $row->languages ?? '',
-                (bool)($row->is_pinned ?? false),
-                (int)($row->view_count ?? 0)
-            );
+            $news[] = $this->hydrate($row);
         }
 
         return $news;
@@ -154,10 +158,9 @@ class NewsRepository
      * @param int $offset
      * @return array
      */
-    public function findByCategory(Tree $tree, int $categoryId, int $limit = 5, int $offset = 0): array
+    public function findByCategory(Tree $tree, int $categoryId, int $limit = 5, int $offset = 0, bool $include_future = false, string $language = ''): array
     {
-        $rows = DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        $rows = $this->baseQuery($tree, $include_future, $language)
             ->where('category_id', '=', $categoryId)
             ->orderBy('is_pinned', 'desc')
             ->orderByDesc('updated')
@@ -167,29 +170,15 @@ class NewsRepository
 
         $news = [];
         foreach ($rows as $row) {
-            $news[] = new News(
-                $row->news_id,
-                $row->gedcom_id,
-                (int)($row->user_id ?? 0),
-                $row->subject,
-                $row->brief,
-                $row->body,
-                $row->media_id,
-                Carbon::parse($row->updated),
-                $row->category_id ?? null,
-                $row->languages ?? '',
-                (bool)($row->is_pinned ?? false),
-                (int)($row->view_count ?? 0)
-            );
+            $news[] = $this->hydrate($row);
         }
 
         return $news;
     }
 
-    public function count(Tree $tree): int
+    public function count(Tree $tree, bool $include_future = false, string $language = ''): int
     {
-        return DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        return $this->baseQuery($tree, $include_future, $language)
             ->count();
     }
 
@@ -200,10 +189,9 @@ class NewsRepository
      * @param int $categoryId
      * @return int
      */
-    public function countByCategory(Tree $tree, int $categoryId): int
+    public function countByCategory(Tree $tree, int $categoryId, bool $include_future = false, string $language = ''): int
     {
-        return DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        return $this->baseQuery($tree, $include_future, $language)
             ->where('category_id', '=', $categoryId)
             ->count();
     }
@@ -217,10 +205,9 @@ class NewsRepository
      * @param int $offset
      * @return array
      */
-    public function findByAuthor(Tree $tree, int $userId, int $limit = 5, int $offset = 0): array
+    public function findByAuthor(Tree $tree, int $userId, int $limit = 5, int $offset = 0, bool $include_future = false, string $language = ''): array
     {
-        $rows = DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        $rows = $this->baseQuery($tree, $include_future, $language)
             ->where('user_id', '=', $userId)
             ->orderBy('is_pinned', 'desc')
             ->orderByDesc('updated')
@@ -230,20 +217,7 @@ class NewsRepository
 
         $news = [];
         foreach ($rows as $row) {
-            $news[] = new News(
-                $row->news_id,
-                $row->gedcom_id,
-                (int)($row->user_id ?? 0),
-                $row->subject,
-                $row->brief,
-                $row->body,
-                $row->media_id,
-                Carbon::parse($row->updated),
-                $row->category_id ?? null,
-                $row->languages ?? '',
-                (bool)($row->is_pinned ?? false),
-                (int)($row->view_count ?? 0)
-            );
+            $news[] = $this->hydrate($row);
         }
 
         return $news;
@@ -256,10 +230,9 @@ class NewsRepository
      * @param int $userId
      * @return int
      */
-    public function countByAuthor(Tree $tree, int $userId): int
+    public function countByAuthor(Tree $tree, int $userId, bool $include_future = false, string $language = ''): int
     {
-        return DB::table('news')
-            ->where('gedcom_id', '=', $tree->id())
+        return $this->baseQuery($tree, $include_future, $language)
             ->where('user_id', '=', $userId)
             ->count();
     }
@@ -371,22 +344,23 @@ class NewsRepository
     public function togglePinned(News $news): bool
     {
         $newStatus = !$news->isPinned();
-        
-        // If we're pinning this news, unpin all others first
+
         if ($newStatus) {
             DB::table('news')
+                ->where('gedcom_id', '=', $news->getGedcomId())
                 ->where('news_id', '!=', $news->getNewsId())
                 ->update([
                     'is_pinned' => false,
                 ]);
         }
-        
+
         DB::table('news')
             ->where('news_id', '=', $news->getNewsId())
+            ->where('gedcom_id', '=', $news->getGedcomId())
             ->update([
                 'is_pinned' => $newStatus,
             ]);
-            
+
         return $newStatus;
     }
 
